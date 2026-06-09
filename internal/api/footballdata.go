@@ -104,3 +104,64 @@ func (c *FootballDataClient) waitIfThrottled(ctx context.Context) error {
 		return ctx.Err()
 	}
 }
+
+func (c *FootballDataClient) GetStandings(ctx context.Context, code string) (*StandingsResponse, error) {
+	var out StandingsResponse
+	if err := c.get(ctx, "/competitions/"+code+"/standings", &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *FootballDataClient) GetMatches(ctx context.Context, code string, f MatchFilter) (*MatchesResponse, error) {
+	path := "/competitions/" + code + "/matches"
+	q := buildQuery(map[string]string{
+		"status":   f.Status,
+		"dateFrom": f.DateFrom,
+		"dateTo":   f.DateTo,
+		"matchday": intToStr(f.Matchday),
+	})
+	if q != "" {
+		path += "?" + q
+	}
+	var out MatchesResponse
+	if err := c.get(ctx, path, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *FootballDataClient) GetScorers(ctx context.Context, code string, limit int) (*ScorersResponse, error) {
+	path := "/competitions/" + code + "/scorers"
+	if limit > 0 {
+		path += "?limit=" + intToStr(limit)
+	}
+	var out ScorersResponse
+	if err := c.get(ctx, path, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func buildQuery(params map[string]string) string {
+	first := true
+	out := ""
+	for k, v := range params {
+		if v == "" {
+			continue
+		}
+		if !first {
+			out += "&"
+		}
+		out += k + "=" + v
+		first = false
+	}
+	return out
+}
+
+func intToStr(i int) string {
+	if i == 0 {
+		return ""
+	}
+	return strconv.Itoa(i)
+}

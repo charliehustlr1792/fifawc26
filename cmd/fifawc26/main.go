@@ -25,21 +25,48 @@ func main() {
 	}
 	defer bc.Close()
 
-	raw := api.NewFootballDataClient(cfg.APIKey)
-	client := api.NewCachedProvider(raw, bc, api.DefaultTTLs())
+	client := api.NewCachedProvider(
+		api.NewFootballDataClient(cfg.APIKey),
+		bc,
+		api.DefaultTTLs(),
+	)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	start := time.Now()
-	comp, err := client.GetCompetition(ctx, "WC")
+	standings, err := client.GetStandings(ctx, "WC")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "api error:", err)
-		os.Exit(1)
+		fmt.Fprintln(os.Stderr, "standings:", err)
+	} else {
+		fmt.Printf("Standings groups: %d\n", len(standings.Standings))
+		for _, s := range standings.Standings {
+			fmt.Printf("  %s (%s) — %d teams\n", s.Group, s.Type, len(s.Table))
+		}
 	}
 
-	fmt.Printf("Competition: %s (%s)\n", comp.Name, comp.Code)
-	fmt.Printf("Area: %s\n", comp.Area.Name)
-	fmt.Printf("Current season: %s → %s\n", comp.CurrentSeason.StartDate, comp.CurrentSeason.EndDate)
-	fmt.Printf("Fetched in %s\n", time.Since(start))
+	matches, err := client.GetMatches(ctx, "WC", api.MatchFilter{Status: "SCHEDULED"})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "matches:", err)
+	} else {
+		fmt.Printf("\nScheduled matches: %d\n", matches.ResultSet.Count)
+		for i, m := range matches.Matches {
+			if i >= 3 {
+				break
+			}
+			fmt.Printf("  %s — %s vs %s (%s)\n", m.UTCDate.Format("Jan 02 15:04"), m.HomeTeam.Name, m.AwayTeam.Name, m.Stage)
+		}
+	}
+
+	scorers, err := client.GetScorers(ctx, "WC", 10)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "scorers:", err)
+	} else {
+		fmt.Printf("\nTop scorers: %d\n", scorers.Count)
+		for i, s := range scorers.Scorers {
+			if i >= 5 {
+				break
+			}
+			fmt.Printf("  %s (%s) — %d goals\n", s.Player.Name, s.Team.TLA, s.Goals)
+		}
+	}
 }
