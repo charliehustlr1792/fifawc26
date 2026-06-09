@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -23,6 +24,13 @@ const (
 	tabCount
 )
 
+type screen int
+
+const (
+	screenTabs screen = iota
+	screenMatchDetail
+)
+
 const chromeHeight = 6
 
 var tabNames = []string{"Standings", "Matches", "Scorers"}
@@ -30,10 +38,15 @@ var tabNames = []string{"Standings", "Matches", "Scorers"}
 type Model struct {
 	client api.Provider
 	active tab
+	screen screen
 	width  int
 	height int
 	vp     viewport.Model
 	ready  bool
+
+	groupFilter   string
+	matchCursor   int
+	selectedMatch *api.Match
 
 	standings *api.StandingsResponse
 	matches   *api.MatchesResponse
@@ -60,9 +73,7 @@ func NewModel(client api.Provider) Model {
 	return Model{client: client, active: tabStandings, loading: true}
 }
 
-func (m Model) Init() tea.Cmd {
-	return m.fetchActive()
-}
+func (m Model) Init() tea.Cmd { return m.fetchActive() }
 
 func (m Model) fetchActive() tea.Cmd {
 	switch m.active {
@@ -91,9 +102,17 @@ func (m Model) fetchActive() tea.Cmd {
 	return nil
 }
 
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmds []tea.Cmd
+func (m Model) sortedMatches() []api.Match {
+	if m.matches == nil {
+		return nil
+	}
+	out := make([]api.Match, len(m.matches.Matches))
+	copy(out, m.matches.Matches)
+	sort.Slice(out, func(i, j int) bool { return out[i].UTCDate.Before(out[j].UTCDate) })
+	return out
+}
 
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -112,23 +131,43 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.screen == screenMatchDetail {
+			switch msg.String() {
+			case "esc", "q":
+				m.screen = screenTabs
+				m.selectedMatch = nil
+				m.refreshViewportContent()
+				return m, nil
+			case "ctrl+c":
+				return m, tea.Quit
+			}
+			var cmd tea.Cmd
+			m.vp, cmd = m.vp.Update(msg)
+			return m, cmd
+		}
+
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
-		case "tab", "l":
+		case "tab":
 			m.active = (m.active + 1) % tabCount
+			m.resetTabState()
 			return m.maybeFetch()
-		case "shift+tab", "h":
+		case "shift+tab":
 			m.active = (m.active + tabCount - 1) % tabCount
+			m.resetTabState()
 			return m.maybeFetch()
 		case "1":
 			m.active = tabStandings
+			m.resetTabState()
 			return m.maybeFetch()
 		case "2":
 			m.active = tabMatches
+			m.resetTabState()
 			return m.maybeFetch()
 		case "3":
 			m.active = tabScorers
+			m.resetTabState()
 			return m.maybeFetch()
 		case "r":
 			m.loading = true
@@ -136,6 +175,59 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshViewportContent()
 			return m, m.fetchActive()
 		}
+
+		if m.active == tabStandings {
+			s := msg.String()
+			if len(s) == 1 && s[0] >= 'a' && s[0] <= 'l' {
+				m.groupFilter = strings.ToUpper(s)
+				m.refreshViewportContent()
+				m.vp.GotoTop()
+				return m, nil
+			}
+			if len(s) == 1 && s[0] >= 'A' && s[0] <= 'L' {
+				m.groupFilter = s
+				m.refreshViewportContent()
+				m.vp.GotoTop()
+				return m, nil
+			}
+			if s == "0" || s == "esc" {
+				m.groupFilter = ""
+				m.refreshViewportContent()
+				m.vp.GotoTop()
+				return m, nil
+			}
+		}
+
+		if m.active == tabMatches && m.matches != nil {
+			list := m.sortedMatches()
+			switch msg.String() {
+			case "up", "k":
+				if m.matchCursor > 0 {
+					m.matchCursor--
+				}
+				m.refreshViewportContent()
+				return m, nil
+			case "down", "j":
+				if m.matchCursor < len(list)-1 {
+					m.matchCursor++
+				}
+				m.refreshViewportContent()
+				return m, nil
+			case "enter":
+				if m.matchCursor >= 0 && m.matchCursor < len(list) {
+					sel := list[m.matchCursor]
+					m.selectedMatch = &sel
+					m.screen = screenMatchDetail
+					m.refreshViewportContent()
+					m.vp.GotoTop()
+					return m, nil
+				}
+			}
+		}
+
+		var cmd tea.Cmd
+		m.vp, cmd = m.vp.Update(msg)
+		return m, cmd
 
 	case standingsMsg:
 		m.loading = false
@@ -148,6 +240,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.matches = msg.data
 		m.err = msg.err
+		m.matchCursor = 0
 		m.refreshViewportContent()
 		m.vp.GotoTop()
 		return m, nil
@@ -162,8 +255,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.vp, cmd = m.vp.Update(msg)
-	cmds = append(cmds, cmd)
-	return m, tea.Batch(cmds...)
+	return m, cmd
+}
+
+func (m *Model) resetTabState() {
+	m.groupFilter = ""
+	m.matchCursor = 0
+	m.screen = screenTabs
+	m.selectedMatch = nil
 }
 
 func (m Model) maybeFetch() (tea.Model, tea.Cmd) {
@@ -197,6 +296,9 @@ func (m *Model) refreshViewportContent() {
 		return
 	}
 	switch {
+	case m.screen == screenMatchDetail && m.selectedMatch != nil:
+		m.vp.SetContent(render.MatchDetail(*m.selectedMatch))
+		return
 	case m.loading:
 		m.vp.SetContent(render.Subtle.Render("Fetching data..."))
 	case m.err != nil:
@@ -255,11 +357,11 @@ func (m Model) renderBody() string {
 	switch m.active {
 	case tabStandings:
 		if m.standings != nil {
-			render.Standings(&sb, m.standings)
+			render.StandingsFiltered(&sb, m.standings, m.groupFilter)
 		}
 	case tabMatches:
 		if m.matches != nil {
-			render.Matches(&sb, m.matches, "")
+			sb.WriteString(render.MatchesList(m.sortedMatches(), m.matchCursor))
 		}
 	case tabScorers:
 		if m.scorers != nil {
@@ -270,7 +372,17 @@ func (m Model) renderBody() string {
 }
 
 func (m Model) renderFooter() string {
-	help := "[1/2/3] tabs   [↑/↓ pgup/pgdn] scroll   [r] refresh   [q] quit"
+	var help string
+	switch {
+	case m.screen == screenMatchDetail:
+		help = "[esc] back   [↑/↓] scroll   [q] quit"
+	case m.active == tabStandings:
+		help = "[1/2/3] tabs   [A–L] filter group   [0] all groups   [r] refresh   [q] quit"
+	case m.active == tabMatches:
+		help = "[1/2/3] tabs   [↑/↓ or j/k] select   [enter] details   [r] refresh   [q] quit"
+	default:
+		help = "[1/2/3] tabs   [↑/↓ pgup/pgdn] scroll   [r] refresh   [q] quit"
+	}
 	return render.Subtle.Render(help)
 }
 
