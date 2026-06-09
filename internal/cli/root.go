@@ -9,6 +9,7 @@ import (
 	"github.com/charliehustlr1792/fifawc26/internal/cache"
 	"github.com/charliehustlr1792/fifawc26/internal/config"
 	"github.com/spf13/cobra"
+	"github.com/charliehustlr1792/fifawc26/internal/tui"
 )
 
 type appDeps struct {
@@ -46,8 +47,11 @@ var rootCmd = &cobra.Command{
 		}
 	},
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("TUI mode coming in a later step. Try: fifawc26 standings")
-	},
+    if err := tui.Run(deps.client); err != nil {
+        fmt.Fprintln(os.Stderr, "tui error:", err)
+        os.Exit(1)
+    }
+},
 }
 
 func Execute() {
