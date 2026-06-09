@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -22,6 +23,8 @@ const (
 	tabCount
 )
 
+const chromeHeight = 6
+
 var tabNames = []string{"Standings", "Matches", "Scorers"}
 
 type Model struct {
@@ -29,6 +32,8 @@ type Model struct {
 	active tab
 	width  int
 	height int
+	vp     viewport.Model
+	ready  bool
 
 	standings *api.StandingsResponse
 	matches   *api.MatchesResponse
@@ -42,12 +47,10 @@ type standingsMsg struct {
 	data *api.StandingsResponse
 	err  error
 }
-
 type matchesMsg struct {
 	data *api.MatchesResponse
 	err  error
 }
-
 type scorersMsg struct {
 	data *api.ScorersResponse
 	err  error
@@ -89,19 +92,33 @@ func (m Model) fetchActive() tea.Cmd {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		h := msg.Height - chromeHeight
+		if h < 3 {
+			h = 3
+		}
+		if !m.ready {
+			m.vp = viewport.New(msg.Width, h)
+			m.ready = true
+		} else {
+			m.vp.Width = msg.Width
+			m.vp.Height = h
+		}
+		m.refreshViewportContent()
 		return m, nil
 
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
-		case "tab", "right", "l":
+		case "tab", "l":
 			m.active = (m.active + 1) % tabCount
 			return m.maybeFetch()
-		case "shift+tab", "left", "h":
+		case "shift+tab", "h":
 			m.active = (m.active + tabCount - 1) % tabCount
 			return m.maybeFetch()
 		case "1":
@@ -116,6 +133,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "r":
 			m.loading = true
 			m.err = nil
+			m.refreshViewportContent()
 			return m, m.fetchActive()
 		}
 
@@ -123,26 +141,42 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.standings = msg.data
 		m.err = msg.err
+		m.refreshViewportContent()
+		m.vp.GotoTop()
+		return m, nil
 	case matchesMsg:
 		m.loading = false
 		m.matches = msg.data
 		m.err = msg.err
+		m.refreshViewportContent()
+		m.vp.GotoTop()
+		return m, nil
 	case scorersMsg:
 		m.loading = false
 		m.scorers = msg.data
 		m.err = msg.err
+		m.refreshViewportContent()
+		m.vp.GotoTop()
+		return m, nil
 	}
-	return m, nil
+
+	var cmd tea.Cmd
+	m.vp, cmd = m.vp.Update(msg)
+	cmds = append(cmds, cmd)
+	return m, tea.Batch(cmds...)
 }
 
 func (m Model) maybeFetch() (tea.Model, tea.Cmd) {
 	if m.hasData() {
 		m.loading = false
 		m.err = nil
+		m.refreshViewportContent()
+		m.vp.GotoTop()
 		return m, nil
 	}
 	m.loading = true
 	m.err = nil
+	m.refreshViewportContent()
 	return m, m.fetchActive()
 }
 
@@ -158,33 +192,40 @@ func (m Model) hasData() bool {
 	return false
 }
 
+func (m *Model) refreshViewportContent() {
+	if !m.ready {
+		return
+	}
+	switch {
+	case m.loading:
+		m.vp.SetContent(render.Subtle.Render("Fetching data..."))
+	case m.err != nil:
+		m.vp.SetContent(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4D4D")).Render("Error: " + m.err.Error()))
+	default:
+		m.vp.SetContent(m.renderBody())
+	}
+}
+
 func (m Model) View() string {
+	if !m.ready {
+		return "Initializing..."
+	}
 	var b strings.Builder
 	b.WriteString(m.renderHeader())
 	b.WriteString("\n")
 	b.WriteString(m.renderTabs())
 	b.WriteString("\n\n")
-
-	switch {
-	case m.loading:
-		b.WriteString(render.Subtle.Render("Fetching data..."))
-	case m.err != nil:
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4D4D")).Render("Error: " + m.err.Error()))
-	default:
-		b.WriteString(m.renderBody())
-	}
-
-	b.WriteString("\n\n")
+	b.WriteString(m.vp.View())
+	b.WriteString("\n")
 	b.WriteString(m.renderFooter())
 	return b.String()
 }
 
 func (m Model) renderHeader() string {
-	title := lipgloss.NewStyle().
+	return lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#FFD23F")).
 		Render("⚽ FIFA World Cup 2026")
-	return title
 }
 
 func (m Model) renderTabs() string {
@@ -229,11 +270,12 @@ func (m Model) renderBody() string {
 }
 
 func (m Model) renderFooter() string {
-	return render.Subtle.Render("[1/2/3 or ←/→] tabs   [r] refresh   [q] quit")
+	help := "[1/2/3] tabs   [↑/↓ pgup/pgdn] scroll   [r] refresh   [q] quit"
+	return render.Subtle.Render(help)
 }
 
 func Run(client api.Provider) error {
-	p := tea.NewProgram(NewModel(client), tea.WithAltScreen())
+	p := tea.NewProgram(NewModel(client), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err := p.Run()
 	return err
 }
