@@ -54,6 +54,8 @@ type Model struct {
 
 	loading bool
 	err     error
+
+	lastUpdated time.Time
 }
 
 type standingsMsg struct {
@@ -69,11 +71,15 @@ type scorersMsg struct {
 	err  error
 }
 
+type tickMsg time.Time
+
 func NewModel(client api.Provider) Model {
 	return Model{client: client, active: tabStandings, loading: true}
 }
 
-func (m Model) Init() tea.Cmd { return m.fetchActive() }
+func (m Model) Init() tea.Cmd {
+	return tea.Batch(m.fetchActive(), tickCmd(45*time.Second))
+}
 
 func (m Model) fetchActive() tea.Cmd {
 	switch m.active {
@@ -100,6 +106,10 @@ func (m Model) fetchActive() tea.Cmd {
 		}
 	}
 	return nil
+}
+
+func tickCmd(d time.Duration) tea.Cmd {
+	return tea.Tick(d, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
 
 func (m Model) sortedMatches() []api.Match {
@@ -232,25 +242,54 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case standingsMsg:
 		m.loading = false
 		m.standings = msg.data
+		if msg.err == nil {
+		m.lastUpdated = time.Now()
+		}
 		m.err = msg.err
 		m.refreshViewportContent()
 		m.vp.GotoTop()
 		return m, nil
+	
 	case matchesMsg:
-		m.loading = false
-		m.matches = msg.data
-		m.err = msg.err
+	m.loading = false
+	m.matches = msg.data
+	m.err = msg.err
+	if msg.err == nil {
+		m.lastUpdated = time.Now()
+	}
+	if m.screen != screenMatchDetail {
 		m.matchCursor = 0
-		m.refreshViewportContent()
+	}
+	if m.screen == screenMatchDetail && m.selectedMatch != nil && msg.data != nil {
+		for _, fresh := range msg.data.Matches {
+			if fresh.ID == m.selectedMatch.ID {
+				freshCopy := fresh
+				m.selectedMatch = &freshCopy
+				break
+			}
+		}
+	}
+	m.refreshViewportContent()
+	if m.screen != screenMatchDetail {
 		m.vp.GotoTop()
-		return m, nil
+	}
+	return m, nil
 	case scorersMsg:
 		m.loading = false
 		m.scorers = msg.data
+		if msg.err == nil {
+		m.lastUpdated = time.Now()
+		}
 		m.err = msg.err
 		m.refreshViewportContent()
 		m.vp.GotoTop()
 		return m, nil
+	case tickMsg:
+		cmds := []tea.Cmd{tickCmd(45 * time.Second)}
+		if !m.loading {
+		cmds = append(cmds, m.fetchActive())
+		}
+		return m, tea.Batch(cmds...)
 	}
 
 	var cmd tea.Cmd
@@ -377,13 +416,31 @@ func (m Model) renderFooter() string {
 	case m.screen == screenMatchDetail:
 		help = "[esc] back   [↑/↓] scroll   [q] quit"
 	case m.active == tabStandings:
-		help = "[1/2/3] tabs   [A–L] filter group   [0] all groups   [r] refresh   [q] quit"
+		help = "[1/2/3] tabs   [A–L] filter group   [0] all   [r] refresh   [q] quit"
 	case m.active == tabMatches:
 		help = "[1/2/3] tabs   [↑/↓ or j/k] select   [enter] details   [r] refresh   [q] quit"
 	default:
 		help = "[1/2/3] tabs   [↑/↓ pgup/pgdn] scroll   [r] refresh   [q] quit"
 	}
-	return render.Subtle.Render(help)
+
+	right := ""
+	if !m.lastUpdated.IsZero() {
+		ago := time.Since(m.lastUpdated).Truncate(time.Second)
+		right = render.Subtle.Render(fmt.Sprintf("updated %s ago", ago))
+	}
+	if m.loading {
+		right = render.Subtle.Render("refreshing...")
+	}
+
+	leftR := render.Subtle.Render(help)
+	if right == "" || m.width == 0 {
+		return leftR
+	}
+	gap := m.width - lipgloss.Width(leftR) - lipgloss.Width(right)
+	if gap < 1 {
+		gap = 1
+	}
+	return leftR + strings.Repeat(" ", gap) + right
 }
 
 func Run(client api.Provider) error {
