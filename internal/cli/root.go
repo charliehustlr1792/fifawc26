@@ -26,21 +26,47 @@ var rootCmd = &cobra.Command{
 	Long:  "fifawc26 is a TUI for live World Cup 26 scores, fixtures, standings, and stats.",
 	SilenceUsage: true,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Load()
-		if err != nil {
-			return err
-		}
-		bc, err := cache.NewBoltCache(cfg.CacheDir)
-		if err != nil {
-			return err
-		}
-		deps = &appDeps{
-			cfg:    cfg,
-			cache:  bc,
-			client: api.NewCachedProvider(api.NewFootballDataClient(cfg.APIKey), bc, api.DefaultTTLs()),
-		}
-		return nil
-	},
+		if cmd.Name() == "setup" {
+    return nil
+}
+    cfg, err := config.Load()
+    if err != nil {
+        return err
+    }
+
+    if cfg.NeedsOnboarding() {
+        if err := tui.RunOnboarding(cfg); err != nil {
+            return err
+        }
+        cfg, err = config.Load()
+        if err != nil {
+            return err
+        }
+    }
+
+    bc, err := cache.NewBoltCache(cfg.CacheDir)
+    if err != nil {
+        return err
+    }
+
+    var provider api.Provider
+    if cfg.Tier == config.TierKeyed && cfg.APIKey != "" {
+        provider = api.NewCachedProvider(
+            api.NewFootballDataClient(cfg.APIKey),
+            bc,
+            api.DefaultTTLs(),
+        )
+    } else {
+        provider = api.NewCachedProvider(
+            api.NewFootballDataClient(""),
+            bc,
+            api.DefaultTTLs(),
+        )
+    }
+
+    deps = &appDeps{cfg: cfg, cache: bc, client: provider}
+    return nil
+},
 	PersistentPostRun: func(cmd *cobra.Command, args []string) {
 		if deps != nil && deps.cache != nil {
 			_ = deps.cache.Close()
