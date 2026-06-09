@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"sync"
 	"time"
+	"strings"
 )
 
 const baseURL = "https://api.football-data.org/v4"
@@ -58,12 +59,18 @@ func (c *FootballDataClient) get(ctx context.Context, path string, out any) erro
 	c.updateThrottle(resp.Header)
 
 	if resp.StatusCode == http.StatusTooManyRequests {
-		return fmt.Errorf("rate limited (429); try again after %s", c.resetAt.Format(time.RFC3339))
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("api error %d: %s", resp.StatusCode, string(body))
-	}
+    return fmt.Errorf("rate limited — auto-retry will resume at %s", c.resetAt.Format("15:04:05"))
+}
+if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+    return fmt.Errorf("auth failed (HTTP %d) — check FIFAWC26_API_KEY", resp.StatusCode)
+}
+if resp.StatusCode == http.StatusNotFound {
+    return fmt.Errorf("not found (HTTP 404) — endpoint or resource unavailable")
+}
+if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+    body, _ := io.ReadAll(resp.Body)
+    return fmt.Errorf("api error %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+}
 
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
 		return fmt.Errorf("decode json: %w", err)
