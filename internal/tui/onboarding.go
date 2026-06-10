@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/charliehustlr1792/fifawc26/internal/config"
+	"github.com/charliehustlr1792/fifawc26/internal/theme"
 )
 
 type onboardScreen int
@@ -124,29 +125,12 @@ func (m OnboardModel) View() string {
 func (m OnboardModel) Finished() bool { return m.finished }
 
 var (
-	obTitle = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("#FFD23F"))
-
-	obDim = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("245"))
-
-	obSelected = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("#0B0E14")).
-		Background(lipgloss.Color("#FFD23F")).
-		Padding(0, 1)
-
-	obUnselected = lipgloss.NewStyle().
-		Padding(0, 1)
-
-	obPanel = lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#FFD23F")).
-		Padding(1, 3)
-
-	obErr = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#FF4D4D"))
+	obTitle      = theme.Title
+	obDim        = theme.Subtle
+	obSelected   = theme.Selection.Padding(0, 1)
+	obUnselected = lipgloss.NewStyle().Padding(0, 1)
+	obPanel      = theme.PanelAccent
+	obErr        = theme.Error
 )
 
 func (m OnboardModel) viewChoose() string {

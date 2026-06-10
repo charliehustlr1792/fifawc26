@@ -13,6 +13,7 @@ import (
 
 	"github.com/charliehustlr1792/fifawc26/internal/api"
 	"github.com/charliehustlr1792/fifawc26/internal/render"
+	"github.com/charliehustlr1792/fifawc26/internal/theme"
 )
 
 type tab int
@@ -31,7 +32,7 @@ const (
 	screenMatchDetail
 )
 
-const chromeHeight = 6
+const chromeHeight = 8
 
 var tabNames = []string{"Standings", "Matches", "Scorers"}
 
@@ -130,11 +131,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if h < 3 {
 			h = 3
 		}
+		innerW := msg.Width - 6
+		if innerW < 20 {
+			innerW = 20
+		}
 		if !m.ready {
-			m.vp = viewport.New(msg.Width, h)
+			m.vp = viewport.New(innerW, h)
 			m.ready = true
 		} else {
-			m.vp.Width = msg.Width
+			m.vp.Width = innerW
 			m.vp.Height = h
 		}
 		m.refreshViewportContent()
@@ -243,42 +248,42 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.standings = msg.data
 		if msg.err == nil {
-		m.lastUpdated = time.Now()
+			m.lastUpdated = time.Now()
 		}
 		m.err = msg.err
 		m.refreshViewportContent()
 		m.vp.GotoTop()
 		return m, nil
-	
+
 	case matchesMsg:
-	m.loading = false
-	m.matches = msg.data
-	m.err = msg.err
-	if msg.err == nil {
-		m.lastUpdated = time.Now()
-	}
-	if m.screen != screenMatchDetail {
-		m.matchCursor = 0
-	}
-	if m.screen == screenMatchDetail && m.selectedMatch != nil && msg.data != nil {
-		for _, fresh := range msg.data.Matches {
-			if fresh.ID == m.selectedMatch.ID {
-				freshCopy := fresh
-				m.selectedMatch = &freshCopy
-				break
+		m.loading = false
+		m.matches = msg.data
+		m.err = msg.err
+		if msg.err == nil {
+			m.lastUpdated = time.Now()
+		}
+		if m.screen != screenMatchDetail {
+			m.matchCursor = 0
+		}
+		if m.screen == screenMatchDetail && m.selectedMatch != nil && msg.data != nil {
+			for _, fresh := range msg.data.Matches {
+				if fresh.ID == m.selectedMatch.ID {
+					freshCopy := fresh
+					m.selectedMatch = &freshCopy
+					break
+				}
 			}
 		}
-	}
-	m.refreshViewportContent()
-	if m.screen != screenMatchDetail {
-		m.vp.GotoTop()
-	}
-	return m, nil
+		m.refreshViewportContent()
+		if m.screen != screenMatchDetail {
+			m.vp.GotoTop()
+		}
+		return m, nil
 	case scorersMsg:
 		m.loading = false
 		m.scorers = msg.data
 		if msg.err == nil {
-		m.lastUpdated = time.Now()
+			m.lastUpdated = time.Now()
 		}
 		m.err = msg.err
 		m.refreshViewportContent()
@@ -287,7 +292,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		cmds := []tea.Cmd{tickCmd(45 * time.Second)}
 		if !m.loading {
-		cmds = append(cmds, m.fetchActive())
+			cmds = append(cmds, m.fetchActive())
 		}
 		return m, tea.Batch(cmds...)
 	}
@@ -341,7 +346,7 @@ func (m *Model) refreshViewportContent() {
 	case m.loading:
 		m.vp.SetContent(render.Subtle.Render("Fetching data..."))
 	case m.err != nil:
-		m.vp.SetContent(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4D4D")).Render("Error: " + m.err.Error()))
+		m.vp.SetContent(theme.Error.Render("Error: " + m.err.Error()))
 	default:
 		m.vp.SetContent(m.renderBody())
 	}
@@ -356,36 +361,31 @@ func (m Model) View() string {
 	b.WriteString("\n")
 	b.WriteString(m.renderTabs())
 	b.WriteString("\n\n")
-	b.WriteString(m.vp.View())
+
+	bodyW := m.width - 2
+	if bodyW < 20 {
+		bodyW = 20
+	}
+	body := theme.Panel.Width(bodyW).Render(m.vp.View())
+	b.WriteString(body)
+
 	b.WriteString("\n")
 	b.WriteString(m.renderFooter())
 	return b.String()
 }
 
 func (m Model) renderHeader() string {
-	return lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("#FFD23F")).
-		Render("⚽ FIFA World Cup 2026")
+	return theme.Title.Render("FIFA World Cup 2026 ⚽")
 }
 
 func (m Model) renderTabs() string {
-	active := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("#0B0E14")).
-		Background(lipgloss.Color("#FFD23F")).
-		Padding(0, 2)
-	inactive := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("245")).
-		Padding(0, 2)
-
 	parts := make([]string, 0, len(tabNames))
 	for i, name := range tabNames {
 		label := fmt.Sprintf("%d %s", i+1, name)
 		if tab(i) == m.active {
-			parts = append(parts, active.Render(label))
+			parts = append(parts, theme.TabActive.Render(label))
 		} else {
-			parts = append(parts, inactive.Render(label))
+			parts = append(parts, theme.TabInactive.Render(label))
 		}
 	}
 	return strings.Join(parts, " ")

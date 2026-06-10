@@ -7,6 +7,7 @@ import (
 
 	"github.com/charliehustlr1792/fifawc26/internal/api"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charliehustlr1792/fifawc26/internal/theme"
 )
 
 func MatchesList(matches []api.Match, selected int) string {
@@ -18,10 +19,7 @@ func MatchesList(matches []api.Match, selected int) string {
 	})
 
 	rowStyle := lipgloss.NewStyle()
-	selStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("#0B0E14")).
-		Background(lipgloss.Color("#FFD23F"))
+	selStyle := theme.Selection
 
 	var b strings.Builder
 	for i, m := range matches {
