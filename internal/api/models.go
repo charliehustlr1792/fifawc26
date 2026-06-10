@@ -122,3 +122,22 @@ type ScorersResponse struct {
 	Season      Season      `json:"season"`
 	Scorers     []Scorer    `json:"scorers"`
 }
+
+type Squad struct {
+	ID          int    `json:"id"`
+	Name        string `json:"name"`
+	Position    string `json:"position"`
+	DateOfBirth string `json:"dateOfBirth"`
+	Nationality string `json:"nationality"`
+}
+
+type TeamDetail struct {
+	ID         int     `json:"id"`
+	Name       string  `json:"name"`
+	ShortName  string  `json:"shortName"`
+	TLA        string  `json:"tla"`
+	Area       Area    `json:"area"`
+	Founded    int     `json:"founded"`
+	ClubColors string  `json:"clubColors"`
+	Squad      []Squad `json:"squad"`
+}

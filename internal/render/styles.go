@@ -1,6 +1,15 @@
 package render
 
-import "github.com/charliehustlr1792/fifawc26/internal/theme"
+import (
+	"github.com/charliehustlr1792/fifawc26/internal/theme"
+)
+
+func truncate(s string, max int) string {
+	if len([]rune(s)) <= max {
+		return s
+	}
+	return string([]rune(s)[:max-1]) + "…"
+}
 
 var (
 	Title           = theme.Title

@@ -138,6 +138,14 @@ func (c *FootballDataClient) GetMatches(ctx context.Context, code string, f Matc
 	return &out, nil
 }
 
+func (c *FootballDataClient) GetTeam(ctx context.Context, id int) (*TeamDetail, error) {
+	var t TeamDetail
+	if err := c.get(ctx, fmt.Sprintf("/teams/%d", id), &t); err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
 func (c *FootballDataClient) GetScorers(ctx context.Context, code string, limit int) (*ScorersResponse, error) {
 	path := "/competitions/" + code + "/scorers"
 	if limit > 0 {

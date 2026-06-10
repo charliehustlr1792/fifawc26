@@ -26,8 +26,8 @@ func MatchesList(matches []api.Match, selected int) string {
 		when := m.UTCDate.Local().Format("Mon Jan 02 15:04")
 		stage := shortStage(m.Stage, m.Group)
 		score := formatScore(m)
-		home := m.HomeTeam.Name
-		away := m.AwayTeam.Name
+		home := truncate(m.HomeTeam.Name, 22)
+		away := truncate(m.AwayTeam.Name, 22)
 		if home == "" {
 			home = "TBD"
 		}

@@ -30,6 +30,7 @@ type screen int
 const (
 	screenTabs screen = iota
 	screenMatchDetail
+	screenTeamDetail
 )
 
 const chromeHeight = 8
@@ -45,9 +46,13 @@ type Model struct {
 	vp     viewport.Model
 	ready  bool
 
-	groupFilter   string
-	matchCursor   int
-	selectedMatch *api.Match
+	groupFilter     string
+	matchCursor     int
+	standingsCursor int
+	selectedMatch   *api.Match
+	selectedTeam    *api.TeamDetail
+	selectedTeamID  int
+	teamFixtures    []api.Match
 
 	standings *api.StandingsResponse
 	matches   *api.MatchesResponse
@@ -69,6 +74,10 @@ type matchesMsg struct {
 }
 type scorersMsg struct {
 	data *api.ScorersResponse
+	err  error
+}
+type teamMsg struct {
+	data *api.TeamDetail
 	err  error
 }
 
@@ -109,6 +118,24 @@ func (m Model) fetchActive() tea.Cmd {
 	return nil
 }
 
+func (m Model) fetchMatches() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		d, err := m.client.GetMatches(ctx, "WC", api.MatchFilter{})
+		return matchesMsg{d, err}
+	}
+}
+
+func (m Model) fetchTeam(id int) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		t, err := m.client.GetTeam(ctx, id)
+		return teamMsg{t, err}
+	}
+}
+
 func tickCmd(d time.Duration) tea.Cmd {
 	return tea.Tick(d, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
@@ -120,6 +147,16 @@ func (m Model) sortedMatches() []api.Match {
 	out := make([]api.Match, len(m.matches.Matches))
 	copy(out, m.matches.Matches)
 	sort.Slice(out, func(i, j int) bool { return out[i].UTCDate.Before(out[j].UTCDate) })
+	return out
+}
+
+func filterMatchesByTeam(matches []api.Match, teamID int) []api.Match {
+	out := make([]api.Match, 0, 8)
+	for _, m := range matches {
+		if m.HomeTeam.ID == teamID || m.AwayTeam.ID == teamID {
+			out = append(out, m)
+		}
+	}
 	return out
 }
 
@@ -151,6 +188,38 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "esc", "q":
 				m.screen = screenTabs
 				m.selectedMatch = nil
+				m.refreshViewportContent()
+				return m, nil
+			case "ctrl+c":
+				return m, tea.Quit
+			case "t":
+				if m.selectedMatch != nil {
+					id := m.selectedMatch.HomeTeam.ID
+					if id == 0 {
+						break
+					}
+					m.selectedTeamID = id
+					m.screen = screenTeamDetail
+					m.loading = true
+					m.refreshViewportContent()
+					var cmds []tea.Cmd
+					cmds = append(cmds, m.fetchTeam(id))
+					if m.matches == nil {
+						cmds = append(cmds, m.fetchMatches())
+					}
+					return m, tea.Batch(cmds...)
+				}
+			}
+			var cmd tea.Cmd
+			m.vp, cmd = m.vp.Update(msg)
+			return m, cmd
+		}
+
+		if m.screen == screenTeamDetail {
+			switch msg.String() {
+			case "esc", "q":
+				m.screen = screenTabs
+				m.selectedTeam = nil
 				m.refreshViewportContent()
 				return m, nil
 			case "ctrl+c":
@@ -195,21 +264,58 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			s := msg.String()
 			if len(s) == 1 && s[0] >= 'a' && s[0] <= 'l' {
 				m.groupFilter = strings.ToUpper(s)
+				m.standingsCursor = 0
 				m.refreshViewportContent()
 				m.vp.GotoTop()
 				return m, nil
 			}
 			if len(s) == 1 && s[0] >= 'A' && s[0] <= 'L' {
 				m.groupFilter = s
+				m.standingsCursor = 0
 				m.refreshViewportContent()
 				m.vp.GotoTop()
 				return m, nil
 			}
 			if s == "0" || s == "esc" {
 				m.groupFilter = ""
+				m.standingsCursor = 0
 				m.refreshViewportContent()
 				m.vp.GotoTop()
 				return m, nil
+			}
+			if m.standings != nil {
+				rows := render.VisibleStandingsRows(m.standings, m.groupFilter)
+				switch s {
+				case "up", "k":
+					if m.standingsCursor > 0 {
+						m.standingsCursor--
+					}
+					m.refreshViewportContent()
+					return m, nil
+				case "down", "j":
+					if m.standingsCursor < len(rows)-1 {
+						m.standingsCursor++
+					}
+					m.refreshViewportContent()
+					return m, nil
+				case "enter":
+					if len(rows) > 0 && m.standingsCursor < len(rows) {
+						id := rows[m.standingsCursor].Team.ID
+						if id == 0 {
+							break
+						}
+						m.selectedTeamID = id
+						m.screen = screenTeamDetail
+						m.loading = true
+						m.refreshViewportContent()
+						var cmds []tea.Cmd
+						cmds = append(cmds, m.fetchTeam(id))
+						if m.matches == nil {
+							cmds = append(cmds, m.fetchMatches())
+						}
+						return m, tea.Batch(cmds...)
+					}
+				}
 			}
 		}
 
@@ -262,7 +368,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			m.lastUpdated = time.Now()
 		}
-		if m.screen != screenMatchDetail {
+		if m.screen != screenMatchDetail && m.screen != screenTeamDetail {
 			m.matchCursor = 0
 		}
 		if m.screen == screenMatchDetail && m.selectedMatch != nil && msg.data != nil {
@@ -274,11 +380,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-		m.refreshViewportContent()
-		if m.screen != screenMatchDetail {
+		if m.screen == screenTeamDetail && m.selectedTeam != nil && msg.data != nil {
+			m.teamFixtures = filterMatchesByTeam(msg.data.Matches, m.selectedTeam.ID)
+			m.refreshViewportContent()
+		} else if m.screen != screenMatchDetail && m.screen != screenTeamDetail {
+			m.refreshViewportContent()
 			m.vp.GotoTop()
 		}
 		return m, nil
+
 	case scorersMsg:
 		m.loading = false
 		m.scorers = msg.data
@@ -289,6 +399,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshViewportContent()
 		m.vp.GotoTop()
 		return m, nil
+
+	case teamMsg:
+		m.loading = false
+		if msg.err != nil {
+			m.err = fmt.Errorf("team data unavailable (keyless mode has limited coverage)")
+		} else {
+			m.selectedTeam = msg.data
+			m.err = nil
+			if msg.data != nil && m.matches != nil {
+				m.teamFixtures = filterMatchesByTeam(m.matches.Matches, msg.data.ID)
+			}
+		}
+		m.refreshViewportContent()
+		m.vp.GotoTop()
+		return m, nil
+
 	case tickMsg:
 		cmds := []tea.Cmd{tickCmd(45 * time.Second)}
 		if !m.loading {
@@ -305,8 +431,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) resetTabState() {
 	m.groupFilter = ""
 	m.matchCursor = 0
+	m.standingsCursor = 0
 	m.screen = screenTabs
 	m.selectedMatch = nil
+	m.selectedTeam = nil
 }
 
 func (m Model) maybeFetch() (tea.Model, tea.Cmd) {
@@ -340,6 +468,9 @@ func (m *Model) refreshViewportContent() {
 		return
 	}
 	switch {
+	case m.screen == screenTeamDetail && m.selectedTeam != nil:
+		m.vp.SetContent(render.TeamDetail(m.selectedTeam, m.teamFixtures, m.standings))
+		return
 	case m.screen == screenMatchDetail && m.selectedMatch != nil:
 		m.vp.SetContent(render.MatchDetail(*m.selectedMatch))
 		return
@@ -396,7 +527,7 @@ func (m Model) renderBody() string {
 	switch m.active {
 	case tabStandings:
 		if m.standings != nil {
-			render.StandingsFiltered(&sb, m.standings, m.groupFilter)
+			sb.WriteString(render.StandingsListTUI(m.standings, m.groupFilter, m.standingsCursor))
 		}
 	case tabMatches:
 		if m.matches != nil {
@@ -413,10 +544,12 @@ func (m Model) renderBody() string {
 func (m Model) renderFooter() string {
 	var help string
 	switch {
-	case m.screen == screenMatchDetail:
+	case m.screen == screenTeamDetail:
 		help = "[esc] back   [↑/↓] scroll   [q] quit"
+	case m.screen == screenMatchDetail:
+		help = "[esc] back   [↑/↓] scroll   [t] home team   [q] quit"
 	case m.active == tabStandings:
-		help = "[1/2/3] tabs   [A–L] filter group   [0] all   [r] refresh   [q] quit"
+		help = "[1/2/3] tabs   [A–L] filter group   [0] all   [↑/↓] team   [enter] detail   [r] refresh   [q] quit"
 	case m.active == tabMatches:
 		help = "[1/2/3] tabs   [↑/↓ or j/k] select   [enter] details   [r] refresh   [q] quit"
 	default:

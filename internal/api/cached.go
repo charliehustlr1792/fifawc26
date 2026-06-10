@@ -21,6 +21,7 @@ type TTLs struct {
 	Standings   time.Duration
 	Matches     time.Duration
 	Scorers     time.Duration
+	Team        time.Duration
 }
 
 func DefaultTTLs() TTLs {
@@ -29,6 +30,7 @@ func DefaultTTLs() TTLs {
 		Standings:   5 * time.Minute,
 		Matches:     60 * time.Second,
 		Scorers:     5 * time.Minute,
+		Team:        24 * time.Hour,
 	}
 }
 
@@ -103,6 +105,19 @@ func (p *CachedProvider) GetScorers(ctx context.Context, code string, limit int)
 		return nil, err
 	}
 	cacheSet(p.c, key, v, p.ttls.Scorers)
+	return v, nil
+}
+
+func (p *CachedProvider) GetTeam(ctx context.Context, id int) (*TeamDetail, error) {
+	key := fmt.Sprintf("team:%d", id)
+	if v, ok := cacheGet[TeamDetail](p.c, key); ok {
+		return v, nil
+	}
+	v, err := p.inner.GetTeam(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	cacheSet(p.c, key, v, p.ttls.Team)
 	return v, nil
 }
 
