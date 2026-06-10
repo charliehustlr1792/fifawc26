@@ -196,7 +196,7 @@ func (m OnboardModel) viewKeyInput() string {
 
 func RunOnboarding(cfg *config.Config) error {
 	m := NewOnboarding(cfg)
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m)
 	result, err := p.Run()
 	if err != nil {
 		return err
